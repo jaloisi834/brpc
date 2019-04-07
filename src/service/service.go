@@ -2,8 +2,8 @@ package service
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/rs/zerolog/log"
 	"github.com/tidwall/gjson"
@@ -18,8 +18,9 @@ const (
 )
 
 type Service struct {
+	mutex          sync.Mutex // Protect matches access
 	matches        map[string]*Match
-	currentMatchID string // TODO: Don't use the concept of current match
+	CurrentMatchID string // TODO: Don't use the concept of current match
 }
 
 func New() *Service {
@@ -52,65 +53,44 @@ func (s *Service) processMoveEvent(msgBytes []byte) (*Actor, error) {
 	return nil, nil
 }
 
-func (s *Service) canMove(player *Actor, directionVector []int) bool {
-	match := s.getCurrentMatch()
-
-	x, y := s.getPlayerGridPosition(match, player)
-
-	newGridX := x + directionVector[0]
-	newGridY := y + directionVector[1]
-
-	if match.Map[newGridY][newGridX] {
-		return true
-	}
-
-	return false
-}
-
-func (s *Service) getPlayerGridPosition(match *Match, player *Actor) (int, int) {
-	return player.X / match.GridSize,
-		player.Y / match.GridSize
-}
-
-func (s *Service) RegisterPlayer(playerID string) (*Actor, error) {
+func (s *Service) RegisterPlayer(ign string) (*Actor, error) {
 	startX, startY := s.getPlayerStartPosition()
 
-	player := &Actor{
-		ID: playerID,
-		X:  startX,
-		Y:  startY,
-	}
+	player := NewActor(ign, startX, startY)
 
-	// If there is no match, create a new one
-	if s.currentMatchID == "" {
-		s.registerMatch()
-	}
-
-	s.addPlayerToMatch(player)
-
-	return player, nil
+	return s.addPlayerToMatch(player), nil
 }
 
-func (s *Service) addPlayerToMatch(player *Actor) {
+// returns either the new player or the existing player with this IGN
+func (s *Service) addPlayerToMatch(player *Actor) *Actor {
 	// TODO: Don't use the concept of current match
 	match := s.getCurrentMatch()
 
-	match.Players[player.ID] = player
+	return match.addPlayer(player)
 }
 
 // TODO: Don't use the concept of current match
 func (s *Service) getCurrentMatch() *Match {
 	// Otherwise return the current one
-	return s.matches[s.currentMatchID]
+	return s.getMatch(s.CurrentMatchID)
 }
 
-func (s *Service) registerMatch() *Match {
+// Safelly gets a match from the store
+func (s *Service) getMatch(id string) *Match {
+	s.mutex.Lock()
+	match := s.matches[id]
+	s.mutex.Unlock()
+
+	return match
+}
+
+func (s *Service) RegisterMatch() *Match {
 	match := NewMatch()
 
 	s.matches[match.ID] = match
 
 	// TODO: Don't use the concept of current match
-	s.currentMatchID = match.ID
+	s.CurrentMatchID = match.ID
 
 	return match
 }
@@ -120,18 +100,43 @@ func (s *Service) getPlayerStartPosition() (int, int) {
 	return 0, 0 //TODO
 }
 
-func (s *Service) updatePlayerPosition(matchID, playerID string, x, y int) error {
-	match, ok := s.matches[matchID]
-	if !ok {
-		return errors.New("match not found")
+func (s *Service) UpdatePlayers(matchID string) map[string]*Actor {
+	match := s.getMatch(matchID)
+
+	match.mutex.Lock()
+	for _, player := range match.Players {
+		// Move the player in their current direction
+		s.movePlayer(match, player, player.Direction)
+	}
+	match.mutex.Unlock()
+
+	return match.Players
+}
+
+func (s *Service) movePlayer(match *Match, player *Actor, directionVector []int) {
+	if s.canMove(match, player, directionVector) {
+		player.move(directionVector)
+	}
+}
+
+func (s *Service) canMove(match *Match, player *Actor, directionVector []int) bool {
+	x, y := s.getPlayerGridPosition(match, player)
+
+	newGridX := x + directionVector[0]
+	newGridY := y + directionVector[1]
+
+	tile := match.Map[newGridY][newGridX]
+	if tile == 0 {
+		return true
+	} else if tile == 2 {
+		// wrap
 	}
 
-	player, ok := match.Players[playerID]
-	if !ok {
-		return errors.New("player not found in match")
-	}
+	return false
+}
 
-	player.setPosition(x, y)
-
-	return nil
+// Returns the top left grid position nearest to the player
+func (s *Service) getPlayerGridPosition(match *Match, player *Actor) (int, int) {
+	return player.X / match.GridSize,
+		player.Y / match.GridSize
 }

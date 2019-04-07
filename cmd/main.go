@@ -3,24 +3,28 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/jaloisi834/brpc/src/service"
 	"github.com/rs/zerolog/log"
-	uuid "github.com/satori/go.uuid"
 )
 
 const registrationPath = "/register"
 
 const serverPort = 8080
 
-var connections = make(map[string]*websocket.Conn) //[playerID]websocketConnection
+const tickRate = 1000
+
+var connections = make(map[string]*websocket.Conn) //[ign]websocketConnection
+var mutex sync.Mutex                               // Protects connection writes
 
 func main() {
-	service := service.New()
+	s := service.New()
 
 	http.HandleFunc(registrationPath, func(w http.ResponseWriter, r *http.Request) {
-		playerID := uuid.Must(uuid.NewV4()).String()
+		ign := r.URL.Query().Get("ign")
 
 		// Setup a websocket connection for the player
 		conn, err := websocket.Upgrade(w, r, nil, 1024, 1024)
@@ -30,10 +34,10 @@ func main() {
 			w.Write([]byte("Error creating websocket connection"))
 			return
 		}
-		connections[playerID] = conn
+		connections[ign] = conn
 
 		// Register and return the player to the client
-		player, err := service.RegisterPlayer(playerID)
+		player, err := s.RegisterPlayer(ign)
 		if err != nil {
 			log.Error().Err(err).Msg("Error registering player")
 			w.WriteHeader(http.StatusInternalServerError)
@@ -41,29 +45,48 @@ func main() {
 			return
 		}
 
-		err = conn.WriteJSON(player)
+		log.Info().Interface("actor", player).Msgf("Registered player - %s", ign)
+
+		payload := service.Payload{
+			Type:    "registered",
+			MatchID: s.CurrentMatchID,
+			Data:    player,
+		}
+		err = writeJSONToConn(conn, payload)
 		if err != nil {
 			log.Error().Err(err).Msg("Error sending player JSON over websocket")
 		}
 
 		// Start an indefinite loop to handle events on this connection
-		handleEvents(playerID, conn, service)
-		log.Info().Msgf("Closing connection for player %s", playerID)
+		handleEvents(ign, conn, s)
+		log.Info().Msgf("Closing connection for player %s", ign)
 	})
+
+	// Create a new match
+	s.RegisterMatch()
+
+	// Start up the ticker to update players in the background
+	var ticker = time.NewTicker(tickRate * time.Millisecond)
+	go tick(ticker, s)
+	log.Info().Msg("Started ticker")
 
 	serverAddress := fmt.Sprintf(":%d", serverPort)
 	log.Info().Msgf("Starting server at %s", serverAddress)
 	http.ListenAndServe(serverAddress, nil)
 }
 
-func handleEvents(playerID string, conn *websocket.Conn, service *service.Service) {
+func handleEvents(ign string, conn *websocket.Conn, service *service.Service) {
 	for {
 		msgType, msg, err := conn.ReadMessage()
 		if err != nil {
-			log.Error().Err(err).Msg("Error reading message from client")
+			log.Error().Err(err).Msg("Error reading message from client: Closing connection")
+			closeConnection(ign, conn)
+			return
 		}
 
 		if msgType == websocket.CloseMessage {
+			log.Info().Msg("Received close signal from client: Closing connection")
+			closeConnection(ign, conn)
 			return
 		}
 
@@ -74,22 +97,50 @@ func handleEvents(playerID string, conn *websocket.Conn, service *service.Servic
 
 		// process the event
 		service.ProcessEvent(msg)
+	}
+}
 
-		// Send it to everyone
-		broadcastEvent(msg)
+func closeConnection(ign string, conn *websocket.Conn) {
+	delete(connections, ign)
+
+	err := conn.Close()
+	if err != nil {
+		log.Error().Err(err).Msgf("Error closing connection for player - %s", ign)
+	}
+}
+
+func tick(ticker *time.Ticker, s *service.Service) {
+	for t := range ticker.C {
+		players := s.UpdatePlayers(s.CurrentMatchID)
+		payload := service.Payload{
+			Type:    "frame",
+			Tick:    t.UnixNano(),
+			MatchID: s.CurrentMatchID,
+			Data:    players,
+		}
+		broadcastEvent(payload)
 	}
 }
 
 // Send an event to all players
 func broadcastEvent(event interface{}) {
-	for playerID, conn := range connections {
-
+	for ign, conn := range connections {
 		// concurrently write to the connection
-		go func(playerID string, conn *websocket.Conn) {
-			err := conn.WriteJSON(event)
+		go func(ign string, conn *websocket.Conn) {
+			err := writeJSONToConn(conn, event)
 			if err != nil {
-				log.Error().Err(err).Msgf("Error sending event to player - %s", playerID)
+				log.Error().Err(err).Msgf("Error sending event to player - %s", ign)
+				closeConnection(ign, conn)
 			}
-		}(playerID, conn)
+		}(ign, conn)
 	}
+}
+
+// Safely writes JSON to the connection
+func writeJSONToConn(conn *websocket.Conn, event interface{}) error {
+	mutex.Lock()
+	err := conn.WriteJSON(event)
+	mutex.Unlock()
+
+	return err
 }
