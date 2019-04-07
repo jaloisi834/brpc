@@ -9,6 +9,7 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// TODO: Use?
 const minPlayers = 2
 
 const keyEventType = "type"
@@ -18,9 +19,8 @@ const (
 )
 
 type Service struct {
-	mutex          sync.Mutex // Protect matches access
-	matches        map[string]*Match
-	CurrentMatchID string // TODO: Don't use the concept of current match
+	mutex   sync.Mutex // Protect matches access
+	matches map[string]*Match
 }
 
 func New() *Service {
@@ -29,7 +29,6 @@ func New() *Service {
 	}
 }
 
-// TODO: Maybe return a more specific type here?
 func (s *Service) ProcessEvent(msgBytes []byte) error {
 	msg := string(msgBytes)
 	log.Info().Str("message", msg).Msg("Received client message")
@@ -66,26 +65,24 @@ func (s *Service) processDirectionEvent(msgBytes []byte) error {
 	return nil
 }
 
-func (s *Service) RegisterPlayer(ign string) (*Actor, error) {
+// RegisterPlayer creates a new player with the given IGN and attempts to assign it to a match
+// If a player already exists with the given IGN, the existing record will be returned instead
+func (s *Service) RegisterPlayer(matchID, ign string) (*Actor, error) {
 	startX, startY := s.getPlayerStartPosition()
 
 	player := NewActor(ign, startX, startY)
 
-	return s.addPlayerToMatch(player), nil
+	return s.addPlayerToMatch(matchID, player)
 }
 
 // returns either the new player or the existing player with this IGN
-func (s *Service) addPlayerToMatch(player *Actor) *Actor {
-	// TODO: Don't use the concept of current match
-	match := s.getCurrentMatch()
+func (s *Service) addPlayerToMatch(matchID string, player *Actor) (*Actor, error) {
+	match := s.getMatch(matchID)
+	if match == nil {
+		return nil, fmt.Errorf("Match not found - %s", matchID)
+	}
 
-	return match.addPlayer(player)
-}
-
-// TODO: Don't use the concept of current match
-func (s *Service) getCurrentMatch() *Match {
-	// Otherwise return the current one
-	return s.getMatch(s.CurrentMatchID)
+	return match.addPlayer(player), nil
 }
 
 // Safelly gets a match from the store
@@ -97,13 +94,11 @@ func (s *Service) getMatch(id string) *Match {
 	return match
 }
 
+// RegisterMatch creates a new match
 func (s *Service) RegisterMatch() *Match {
 	match := NewMatch()
 
 	s.matches[match.ID] = match
-
-	// TODO: Don't use the concept of current match
-	s.CurrentMatchID = match.ID
 
 	log.Info().Msgf("Started match with ID %s", match.ID)
 
