@@ -15,7 +15,7 @@ const registrationPath = "/register"
 
 const serverPort = 8080
 
-const tickRate = 1000
+const tickRate = 2000 // milliseconds
 
 var connections = make(map[string]*websocket.Conn) //[ign]websocketConnection
 var mutex sync.Mutex                               // Protects connection writes
@@ -96,7 +96,10 @@ func handleEvents(ign string, conn *websocket.Conn, service *service.Service) {
 			Msg("Received message from client")
 
 		// process the event
-		service.ProcessEvent(msg)
+		err = service.ProcessEvent(msg)
+		if err != nil {
+			log.Error().Err(err).Msg("Error processing event")
+		}
 	}
 }
 

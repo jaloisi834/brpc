@@ -2,6 +2,7 @@ package service
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"os"
 	"strconv"
@@ -19,8 +20,7 @@ const speed = 10
 
 type DirectionEvent struct {
 	MatchID      string `json:"matchId"`
-	Tick         int64  `json:"tick"`
-	Actor        Actor  `json:"actor"`
+	PlayerID     string `json:"playerId"`
 	NewDirection []int  `json:"newDirection"`
 }
 
@@ -51,9 +51,14 @@ func NewActor(ign string, x, y int) *Actor {
 	}
 }
 
-func (a *Actor) move(directionVector []int) {
-	a.X += directionVector[0] * speed
-	a.Y += directionVector[1] * speed
+func (a *Actor) move(distance []int) {
+	a.X += distance[0]
+	a.Y += distance[1]
+}
+
+func (a *Actor) getPoint2() (int, int) {
+	return a.X + (gridSize * 2),
+		a.Y + (gridSize * 2)
 }
 
 type Match struct {
@@ -117,11 +122,6 @@ func loadMap() [][]int {
 				}
 			}
 
-			// Move to the next row on newline
-			if r == '\n' {
-				break
-			}
-
 			if r == '1' {
 				m[y][x] = 1
 			} else if r == '2' {
@@ -129,6 +129,8 @@ func loadMap() [][]int {
 			}
 		}
 	}
+
+	fmt.Printf("%v", m)
 
 	log.Debug().Msg("Successfully loaded map")
 	return m
