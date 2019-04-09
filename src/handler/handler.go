@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/jaloisi834/brpc/src/service"
+	"github.com/jaloisi834/ghost-host/src/service"
 	"github.com/rs/zerolog/log"
 )
 
