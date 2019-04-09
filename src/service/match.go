@@ -35,7 +35,7 @@ func NewMatch() *Match {
 	return &Match{
 		GridSize: gridSize,
 		Map:      loadMap(),
-		ID:       uuid.Must(uuid.NewV4()).String(),
+		ID:       uuid.NewV4().String(),
 		Players:  make(map[string]*Actor),
 		AvailableStartPositions: []startPosition{
 			{8, 10},

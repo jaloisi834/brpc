@@ -20,7 +20,7 @@ type Actor struct {
 
 func NewActor(ign string, x, y float32) *Actor {
 	return &Actor{
-		ID:        uuid.Must(uuid.NewV4()).String(),
+		ID:        uuid.NewV4().String(),
 		IGN:       ign,
 		X:         x,
 		Y:         y,
