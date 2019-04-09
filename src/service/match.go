@@ -12,7 +12,7 @@ import (
 )
 
 // TODO: Make dynamic?
-const gridSize = 30
+const gridSize = 26.2 //26.2
 
 // TODO: It's currently assumed that main will be run from the base directory
 const map1Path = "./maps/map1.pacm"
@@ -23,11 +23,12 @@ const (
 )
 
 type Match struct {
-	mutex    sync.Mutex // Protect players access
-	ID       string
-	GridSize int
-	Map      [][]int           // [y][x]
-	Players  map[string]*Actor // [playerID]Actor
+	mutex                   sync.Mutex // Protect players access
+	ID                      string
+	GridSize                float32
+	Map                     [][]int           // [y][x]
+	Players                 map[string]*Actor // [playerID]Actor
+	AvailableStartPositions []startPosition
 }
 
 func NewMatch() *Match {
@@ -36,7 +37,28 @@ func NewMatch() *Match {
 		Map:      loadMap(),
 		ID:       uuid.Must(uuid.NewV4()).String(),
 		Players:  make(map[string]*Actor),
+		AvailableStartPositions: []startPosition{
+			{8, 10},
+			{16, 10},
+			{8, 17},
+			{17, 17},
+		},
 	}
+}
+
+func (m *Match) getNextStartPosition() startPosition {
+	if len(m.AvailableStartPositions) == 0 {
+		log.Error().Msg("No availible start positions")
+		return startPosition{0, 0}
+	}
+
+	// Always try to get the first one
+	startPosition := m.AvailableStartPositions[0]
+
+	// Then remove it from the slice
+	m.AvailableStartPositions = m.AvailableStartPositions[1:]
+
+	return startPosition
 }
 
 // TODO: Don't hardcode map location and handle errors without dying
@@ -77,6 +99,11 @@ func loadMap() [][]int {
 				log.Fatal().Err(err).Msg("Error reading from map")
 			}
 
+			// If we get a new line, keep the x index the same
+			if r == '\n' {
+				x--
+			}
+
 			if r == '1' {
 				m[y][x] = wall
 			} else if r == '2' {
@@ -110,4 +137,9 @@ func (m *Match) addPlayer(player *Actor) *Actor {
 
 	m.Players[player.ID] = player
 	return player
+}
+
+type startPosition struct {
+	X float32
+	Y float32
 }

@@ -12,7 +12,7 @@ import (
 // TODO: Use?
 const minPlayers = 2
 
-const keyEventType = "type"
+const keyEventType = "eventType"
 
 const (
 	eventTypeDirection = "direction"
@@ -68,20 +68,20 @@ func (s *Service) processDirectionEvent(msgBytes []byte) error {
 // RegisterPlayer creates a new player with the given IGN and attempts to assign it to a match
 // If a player already exists with the given IGN, the existing record will be returned instead
 func (s *Service) RegisterPlayer(matchID, ign string) (*Actor, error) {
-	startX, startY := s.getPlayerStartPosition()
-
-	player := NewActor(ign, startX, startY)
-
-	return s.addPlayerToMatch(matchID, player)
-}
-
-// returns either the new player or the existing player with this IGN
-func (s *Service) addPlayerToMatch(matchID string, player *Actor) (*Actor, error) {
 	match := s.getMatch(matchID)
 	if match == nil {
 		return nil, fmt.Errorf("Match not found - %s", matchID)
 	}
 
+	startX, startY := s.getPlayerStartPosition(match)
+
+	player := NewActor(ign, startX, startY)
+
+	return s.addPlayerToMatch(match, player)
+}
+
+// returns either the new player or the existing player with this IGN
+func (s *Service) addPlayerToMatch(match *Match, player *Actor) (*Actor, error) {
 	return match.addPlayer(player), nil
 }
 
@@ -106,8 +106,11 @@ func (s *Service) RegisterMatch() *Match {
 }
 
 // Determines a good starting point for the player based on the current player locations
-func (s *Service) getPlayerStartPosition() (int, int) {
-	return 0, 0 //TODO
+func (s *Service) getPlayerStartPosition(match *Match) (float32, float32) {
+	startPosition := match.getNextStartPosition()
+
+	return startPosition.X * gridSize,
+		startPosition.Y * gridSize
 }
 
 func (s *Service) UpdatePlayers(matchID string) map[string]*Actor {
@@ -115,6 +118,11 @@ func (s *Service) UpdatePlayers(matchID string) map[string]*Actor {
 
 	match.mutex.Lock()
 	for _, player := range match.Players {
+		// Don't check dead players
+		if player.Dead {
+			continue
+		}
+
 		// Move the player in their current direction
 		s.movePlayer(match, player, player.Direction)
 	}
@@ -149,32 +157,75 @@ func (s *Service) turnPlayer(match *Match, player *Actor, directionVector []int)
 	}
 }
 
+func (s *Service) checkCollision(match *Match, player *Actor) {
+	match.mutex.Lock()
+	for _, otherPlayer := range match.Players {
+		if s.intersect(player, otherPlayer) {
+			// Don't check dead players
+			if otherPlayer.Dead {
+				continue
+			}
+
+			playerEating := player.Eating
+			otherPlayerEating := otherPlayer.Eating
+
+			// If they are equal in power, bounce them off each other
+			if playerEating == otherPlayerEating {
+				player.reverseDirection()
+				otherPlayer.reverseDirection()
+				continue
+			}
+
+			// Otherwise process tha damage done
+			player.processDamage(otherPlayerEating)
+			otherPlayer.processDamage(playerEating)
+		}
+	}
+	match.mutex.Unlock()
+}
+
+func (s *Service) intersect(a1, a2 *Actor) bool {
+	a1X, a1Y := a1.X, a1.Y
+	a1X2, a1Y2 := a1.getPoint2()
+
+	a2X, a2Y := a2.X, a2.Y
+	a2X2, a2Y2 := a2.getPoint2()
+
+	if a1X > a2X2 ||
+		a1X2 < a2X ||
+		a1Y < a2Y2 ||
+		a1Y2 > a2Y {
+		return false
+	}
+
+	return true
+}
+
 // returns the movable distance in each direction
 // TODO: just ugh
-func (s *Service) canMove(match *Match, player *Actor, directionVector []int) []int {
-	gridX, gridY := player.X/gridSize, player.Y/gridSize
-	log.Info().Msgf("gridX:%d,gridY:%d", gridX, gridY)
+func (s *Service) canMove(match *Match, player *Actor, directionVector []int) []float32 {
+	gridX, gridY := int(player.X/gridSize), int(player.Y/gridSize)
 
 	x2, y2 := player.getPoint2()
-	log.Info().Msgf("x2:%d,y2:%d", x2, y2)
-	gridX2, gridY2 := x2/gridSize, y2/gridSize
-	log.Info().Msgf("gridX2:%d,gridY2:%d", gridX2, gridY2)
+	gridX2, gridY2 := int(x2/gridSize), int(y2/gridSize)
 
-	xDist := speed * directionVector[0]
-	yDist := speed * directionVector[1]
+	xDist := float32(speed * directionVector[0])
+	yDist := float32(speed * directionVector[1])
 
 	if directionVector[0] == -1 { //left
 		// check the 2 or three tiles to the left that we could collide with
 		for i := gridY; i < gridY2; i++ {
-			log.Info().Msgf("moving left - Checking (%d,%d)", i, gridX-1)
+			if gridX-1 <= 0 {
+				xDist = 0
+				continue
+			}
 			if s.checkTile(match.Map[i][gridX-1]) {
 				// returns true if the tile is passable, check the next one
 				continue
 			}
 
 			// otherwise, we have a potential collision ahead, see how far
-			xDist = player.X % gridSize
-			log.Info().Msgf("moving left - xDist:%d", xDist)
+			xDist = player.X - (float32(gridX) * gridSize)
 			if xDist < 0 {
 				xDist = 0
 			} else if xDist > speed {
@@ -185,12 +236,15 @@ func (s *Service) canMove(match *Match, player *Actor, directionVector []int) []
 	} else if directionVector[0] == 1 { //right
 		for i := gridY; i < gridY2; i++ {
 			log.Info().Msgf("moving right - Checking (%d,%d)", i, gridX2+1)
+			if gridX2+1 >= len(match.Map[i]) {
+				xDist = 0
+				continue
+			}
 			if s.checkTile(match.Map[i][gridX2+1]) {
 				continue
 			}
 
-			xDist = ((gridX2 + 1) * gridSize) - x2
-			log.Info().Msgf("moving right - xDist:%d", xDist)
+			xDist = (float32(gridX2+1) * gridSize) - x2
 			if xDist < 0 {
 				xDist = 0
 			} else if xDist > speed {
@@ -201,12 +255,15 @@ func (s *Service) canMove(match *Match, player *Actor, directionVector []int) []
 	} else if directionVector[1] == -1 { //up
 		for i := gridX; i < gridX2; i++ {
 			log.Info().Msgf("moving up - Checking (%d,%d)", gridY-1, i)
+			if gridY-1 <= 0 {
+				yDist = 0
+				continue
+			}
 			if s.checkTile(match.Map[gridY-1][i]) {
 				continue
 			}
 
-			yDist = player.Y % gridSize
-			log.Info().Msgf("moving up - yDist:%d", yDist)
+			yDist = player.Y - (float32(gridY) * gridSize)
 			if yDist < 0 {
 				yDist = 0
 			} else if yDist > speed {
@@ -217,12 +274,15 @@ func (s *Service) canMove(match *Match, player *Actor, directionVector []int) []
 	} else if directionVector[1] == 1 { //down
 		for i := gridX; i < gridX2; i++ {
 			log.Info().Msgf("moving down - Checking (%d,%d)", gridY2+1, i)
+			if gridY2+1 >= len(match.Map) {
+				yDist = 0
+				continue
+			}
 			if s.checkTile(match.Map[gridY2+1][i]) {
 				continue
 			}
 
-			yDist = ((gridY2 + 1) * gridSize) - y2 - 1
-			log.Info().Msgf("moving down - yDist:%d", yDist)
+			yDist = (float32(gridY2+1) * gridSize) - y2 - 1
 			if yDist < 0 {
 				yDist = 0
 			} else if yDist > speed {
@@ -231,7 +291,7 @@ func (s *Service) canMove(match *Match, player *Actor, directionVector []int) []
 		}
 	}
 
-	return []int{xDist, yDist}
+	return []float32{xDist, yDist}
 }
 
 func (s *Service) checkTile(tile int) bool {

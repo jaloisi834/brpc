@@ -12,7 +12,7 @@ import (
 
 const registrationPath = "/register"
 
-const tickRate = 1000 // milliseconds
+const tickRate = 32 // milliseconds
 
 type Handler struct {
 	connections    map[string]*websocket.Conn //[ign]websocketConnection
