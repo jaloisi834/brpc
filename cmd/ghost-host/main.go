@@ -6,8 +6,8 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
-	"github.com/jaloisi834/ghost-host/src/handler"
-	"github.com/jaloisi834/ghost-host/src/service"
+	"github.com/jaloisi834/ghost-host/internal/handler"
+	"github.com/jaloisi834/ghost-host/internal/service"
 	"github.com/rs/zerolog/log"
 )
 
