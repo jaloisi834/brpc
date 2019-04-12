@@ -15,7 +15,7 @@ import (
 const gridSize = 26.2 //26.2
 
 // TODO: It's currently assumed that main will be run from the base directory
-const map1Path = "./maps/map1.pacm"
+const map1Path = "./assets/maps/map1.txt"
 
 const (
 	wall = 1
