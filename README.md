@@ -4,12 +4,25 @@ A server for networked Pac-Man.
 
 ## Setup
 
-Install and configure golang: https://golang.org/doc/install
+Install Docker: https://docs.docker.com/install/
 
 ## Run a Local Server
 
+### Build and start the server
+
 ```
-$ make dev-server
+$ make start
+```
+
+### Rebuild the server
+```
+$ make build
+```
+
+### Stop the server
+
+```
+$ make stop
 ```
 
 ## Run Tests
